@@ -1,100 +1,86 @@
-from flask import render_template, request, current_app, send_file
-from werkzeug.utils import secure_filename
-from gpx2tcx.blueprint import gpx2tcx
-from xml.dom import minidom
-import os, uuid
-from gpx2tcx.controller.tcxmaker import TCXMaker
 from io import BytesIO
 
-ALLOWED_EXTENSIONS = set(['gpx'])
+from flask import render_template, request, send_file
+from gpx2tcx.blueprint import gpx2tcx
+from gpx2tcx.controller.tcxmaker import TCXMaker
+from xml.dom import minidom
 
-def __allowed_file(filename):
-    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+ALLOWED_EXTENSIONS = {"gpx"}
+
+
+def _allowed_file(filename):
+    return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
+
 
 @gpx2tcx.route('/upload')
 def upload():
     return render_template('upload.html')
 
+
 @gpx2tcx.route('/upload_process', methods=['POST'])
 def upload_process():
+    upload_gpx = request.files.get('gpxfile')
 
-    upload_gpx = request.files['gpxfile']
+    if not upload_gpx or not upload_gpx.filename:
+        return render_template('upload.html', error='GPX ??? ??? ???.'), 400
+
+    if not _allowed_file(upload_gpx.filename):
+        return render_template('upload.html', error='gpx ??? ??? ???? ? ????.'), 400
 
     try:
-        if upload_gpx and __allowed_file(upload_gpx.filename):
-            ext = upload_gpx.filename.rsplit('.', 1)[1]
+        gpx_xmldoc = minidom.parse(upload_gpx.stream).documentElement
 
-            # 업로드 폴더 경로를 구한다.
-            upload_folder = os.path.join(current_app.root_path, current_app.config['UPLOAD_FOLDER'])
+        tcx_maker = TCXMaker()
 
-            # 업로드 폴더가 없다면 새로 생성
-            if False == os.path.exists(upload_folder):
-                os.makedirs(upload_folder)
+        wpt_items = gpx_xmldoc.getElementsByTagName('wpt')
+        for wpt_item in wpt_items:
+            wpt_name_nodes = wpt_item.getElementsByTagName('name')
+            wpt_name = wpt_name_nodes[0].firstChild.data if wpt_name_nodes and wpt_name_nodes[0].firstChild else 'Waypoint'
+            tcx_maker.add_coursepoint(wpt_item.getAttribute('lat'), wpt_item.getAttribute('lon'), wpt_name)
 
-            # 파일 업로드
-            filename = secure_filename(upload_gpx.filename.rsplit('.', 1)[0] + '_' + str(uuid.uuid4()) + '.' + ext)
-            upload_gpx.save(os.path.join(upload_folder, filename))
+        trk_items = gpx_xmldoc.getElementsByTagName('trk')
+        if not trk_items:
+            return render_template('upload.html', error='?? ??(trk)? ?? GPX ?????.'), 400
 
-            gpx_xmldoc = minidom.parse(os.path.join(upload_folder, filename))
-            gpx_xmldoc = gpx_xmldoc.firstChild
+        trk_name_nodes = trk_items[0].getElementsByTagName('name')
+        course_name = trk_name_nodes[0].firstChild.data if trk_name_nodes and trk_name_nodes[0].firstChild else 'Converted Course'
+        tcx_maker.add_name(course_name)
 
-            # print('---------------------------------------------------------------------')
-            # print(gpx_xmldoc.toxml())
+        trkseg_items = trk_items[0].getElementsByTagName('trkseg')
+        if not trkseg_items:
+            return render_template('upload.html', error='?? ????(trkseg)? ?? GPX ?????.'), 400
 
-            #
-            # 여기서부터 tcx 파일 생성 시작
-            #
+        trkpt_items = trkseg_items[0].getElementsByTagName('trkpt')
+        if not trkpt_items:
+            return render_template('upload.html', error='?? ???(trkpt)? ?? GPX ?????.'), 400
 
-            tcx_maker = TCXMaker()
+        begin_lat = ''
+        begin_lon = ''
+        end_lat = ''
+        end_lon = ''
 
+        for trkpt_item in trkpt_items:
+            ele_nodes = trkpt_item.getElementsByTagName('ele')
+            ele = ele_nodes[0].firstChild.data if ele_nodes and ele_nodes[0].firstChild else '0'
 
-            metadata_items = gpx_xmldoc.getElementsByTagName('metadata')
-            for metadata_item in metadata_items:
-                print('---------------------------------------------------------------------')
-                print(metadata_item.toxml())
+            lat = trkpt_item.getAttribute('lat')
+            lon = trkpt_item.getAttribute('lon')
+            tcx_maker.add_trackpoint(lat, lon, ele)
 
-            wpt_items = gpx_xmldoc.getElementsByTagName('wpt')
-            for wpt_item in wpt_items:
-                wpt_name = wpt_item.getElementsByTagName('name')
-                tcx_maker.add_coursepoint(wpt_item.getAttribute('lat'), wpt_item.getAttribute('lon'), wpt_name[0].firstChild.data)
+            if not begin_lat and not begin_lon:
+                begin_lat = lat
+                begin_lon = lon
 
-            trk_items = gpx_xmldoc.getElementsByTagName('trk')
+            end_lat = lat
+            end_lon = lon
 
-            course_name = trk_items[0].getElementsByTagName('name')[0].firstChild.data
-            tcx_maker.add_name(course_name)
+        tcx_maker.add_lap('0', '0', begin_lat, begin_lon, end_lat, end_lon)
 
-            trkseg_items = trk_items[0].getElementsByTagName('trkseg')
-            trkpt_items = trkseg_items[0].getElementsByTagName('trkpt')
-
-            begin_lat = ''
-            begin_lon = ''
-            end_lat = ''
-            end_lon = ''
-
-            for trkpt_item in trkpt_items:
-                ele = trkpt_item.getElementsByTagName('ele')
-                tcx_maker.add_trackpoint(trkpt_item.getAttribute('lat'), trkpt_item.getAttribute('lon'), ele[0].firstChild.data)
-
-                if begin_lat == '' and begin_lon == '':
-                    begin_lat = trkpt_item.getAttribute('lat')
-                    begin_lon = trkpt_item.getAttribute('lon')
-
-                end_lat = trkpt_item.getAttribute('lat')
-                end_lon = trkpt_item.getAttribute('lon')
-
-            tcx_maker.add_lap('0', '0', begin_lat, begin_lon, end_lat, end_lon)
-
-        # return '파일 업로드 성공 : ' + os.path.join(upload_folder, filename)
-        # return '파일 업로드 성공 : ' + os.path.join(upload_folder, filename) + '<br> + ' + tcx_xmldoc.toprettyxml(indent="  ")
-
-        # return tcx_maker.get_tcx()
-
-        # 생성된 tcx 파일을 웹브라우저로 다운로드
         buffer = BytesIO()
         buffer.write(tcx_maker.get_tcx())
         buffer.seek(0)
-        return send_file(buffer, as_attachment=True, attachment_filename=upload_gpx.filename.rsplit('.', 1)[0] + '.tcx', mimetype='text/xml')
-    except Exception as e:
-        raise e
 
-    return render_template('upload.html')
+        download_name = upload_gpx.filename.rsplit('.', 1)[0] + '.tcx'
+        return send_file(buffer, as_attachment=True, download_name=download_name, mimetype='application/xml')
+    except Exception:
+        return render_template('upload.html', error='?? ?? ? ??? ??????.'), 500

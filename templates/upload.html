@@ -1,14 +1,19 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>Title</title>
-    <form id="upload" name="upload" action="/upload_process" method="POST" enctype="multipart/form-data">
-        <input id="gpxfile" name="gpxfile" type="file" accept=".gpx" />
-        <input type="submit" name="submit" value="업로드" />
-    </form>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GPX to TCX Converter</title>
 </head>
 <body>
-
+    <h1>GPX to TCX ???</h1>
+    {% if error %}
+    <p style="color: #b00020;">{{ error }}</p>
+    {% endif %}
+    <form id="upload" name="upload" action="/upload_process" method="POST" enctype="multipart/form-data">
+        <input id="gpxfile" name="gpxfile" type="file" accept=".gpx" required>
+        <button type="submit">????</button>
+    </form>
+    <p><a href="/">???</a></p>
 </body>
 </html>
